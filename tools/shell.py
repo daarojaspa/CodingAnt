@@ -1,6 +1,8 @@
 import subprocess,shlex
 def what_shell():
     return 0
+##i got an error calling this tool because shell=¡True and model somehow thougth  that was active 
+#figure out why 
 def run_in_shell(commands:str):
     """takes in the commands to run as a list and rundrundem
     giving back  standar  output , standar error and error code """

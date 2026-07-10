@@ -1,13 +1,57 @@
-tools_schema= [
-    { "type": "function", "name": "read_file",
-	 "description": "it recives a file path returns in one string all the lines in the file" },
-    { "type": "function", "name": "write_file",
-	 "description": """"it recives the file path and the content it should go 
-    in it and overwrites the file , is the lazy option to edit one file , i think les tokens are need it
-     just  be aware the path is right """
-    " },
-    { "type": "function", "name": "run_in_shell",
-	 "description": """"takes in the commands to run as a string  and run them
-    giving back  standar  output , standar error and error code """
-    " }
-  ]
+tools_schema = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Recibe una ruta de archivo y devuelve en un solo string todas las líneas del archivo",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Ruta del archivo a leer"
+                    }
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Recibe la ruta del archivo y el contenido que debe ir en él. Sobrescribe el archivo completo.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Ruta del archivo a escribir"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Contenido completo que reemplazará el archivo"
+                    }
+                },
+                "required": ["path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_in_shell",
+            "description": "Recibe los comandos a ejecutar como string y los corre, devolviendo stdout, stderr y código de salida",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "commands": {
+                        "type": "string",
+                        "description": "Comandos de shell a ejecutar"
+                    }
+                },
+                "required": ["commands"]
+            }
+        }
+    }
+]

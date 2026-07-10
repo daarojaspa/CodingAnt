@@ -1,6 +1,6 @@
 import os
 """The paths are relative to the folder  where the agent runs """
-def write_file(path, content):
+def write_file(path:str, content:str):
     """it recives the file path and the content it should go 
     in it and overwrites the file , is the lazy option to edit one file , i think les tokens are need it
      just  be aware the path is right """
@@ -11,7 +11,7 @@ def write_file(path, content):
         f.write(content)
 
 
-def read_file(path):
+def read_file(path:str):
     """it recives a file path returns in one string all the lines in the file"""
     with open(path,'r') as f:
         content =f.read()
