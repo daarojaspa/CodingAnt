@@ -1,18 +1,9 @@
 from dotenv import load_dotenv
-<<<<<<< HEAD
-import json 
-from tools import schema
-import os
-
-from openai import OpenAI
-
-=======
 import json
 import subprocess          # <-- was missing; your except referenced it
 from tools import schema
 import os
 from openai import OpenAI
->>>>>>> fe37ed5 (create test_tools, and ran it)
 from tools.files import read_file, write_file
 from tools.shell import run_in_shell
 
