@@ -44,3 +44,17 @@
 - Retry count and backoff ratio are intentionally left unspecified — the spec requires only that
   they be bounded, geometric, and reported. Concrete values belong in `/speckit-plan`.
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
+
+### Re-validation after clarification (2026-08-10)
+
+- All 16 items still pass; no state changes. The open placeholders the checklist tolerated
+  ("intended behaviour is stated rather than left to chance", "without exhausting the context")
+  are now resolved into testable requirements, so "Requirements are testable and unambiguous"
+  holds more strongly than before rather than less.
+- Two further deliberate exceptions to "no implementation details", both owner decisions
+  recorded rather than design choices made here:
+  - The atomic write mechanism (temp file in the target's directory plus an atomic rename) and
+    the two-stage command boundary (text check plus an OS-level restriction) were chosen by the
+    owner in clarification as the substance of the durability and sandbox guarantees; stating
+    them as behaviour without the mechanism would leave both untestable.
+  - The exit word `suerte_socio` is user-facing vocabulary supplied by the owner.

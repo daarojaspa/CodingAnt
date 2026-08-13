@@ -8,6 +8,16 @@
 
 **Input**: User description: "p1: raw agent + 3 basic tools — a multiturn console loop where the agent evaluates whether it needs a tool and calls it. Three tools: read_file, write_file, run_bash. Explicit stop conditions: bounded retries with geometric backoff, a 6000-token-per-answer budget, and a max of 10 loop iterations without producing an answer. The agent must fail gracefully; the tool-calling loop inside the main loop must be robust."
 
+## Clarifications
+
+### Session 2026-08-10
+
+- Q: When the agent runs a shell command, how should the system decide whether that command stays inside the project folder? (FR-012) → A: Option C — reject obviously-escaping command text first for a fast, clear refusal, then still run the command under an OS-level restriction that is the real boundary.
+- Q: If the agent writes to a path inside the project root whose parent folder does not exist yet, should the missing folders be created automatically? (FR-008) → A: Yes, parent folders only, always inside the project root, and only after the user explicitly confirms; before asking, the agent must consider that the missing folder may be a typo of one that already exists.
+- Q: What should `read_file` do when the requested file is very large or is binary rather than text? (FR-007) → A: Option A — a configurable character/word ceiling (initially about 1000 words, held as a variable rather than a hard-coded literal so it can later become a percentage of remaining context), returning the leading portion plus an explicit truncation note; binary files are refused.
+- Q: Should the session write a log of the agent's turns, tool calls, and stop reasons to a file, or is what appears on the console enough? (SC-006, SC-007) → A: Option B — console output plus a machine-readable session log inside the project root; the log makes the consistency run (30 identical runs) and the generalization run (30 slightly varied prompts) mechanically verifiable.
+- Q: How does the developer end a console session, and what happens to a request that is mid-run when they do? (FR-001, FR-006) → A: Both Ctrl-C and the exit word `suerte_socio` end the session, stating "user exit"; because an interrupt can land mid-write, `write_file` must be atomic — write a temporary file in the target's own directory, then replace the target with a single atomic rename.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Agent creates a working program on request (Priority: P1)
@@ -55,9 +65,10 @@ The developer trusts the agent to run shell commands only because it cannot reac
 
 1. **Given** a running session, **When** the agent attempts to read a path resolving outside the project root, **Then** the read is refused and the refusal reason is returned to the agent as the observation.
 2. **Given** a running session, **When** the agent attempts to write to a path resolving outside the project root, **Then** the write is refused and no file is created anywhere.
-3. **Given** a running session, **When** a shell command would act on a location outside the project root, **Then** the command is refused rather than executed.
-4. **Given** a path that stays inside the project root only by way of symlinks or `..` segments, **When** it is resolved, **Then** resolution happens before the check so the boundary cannot be escaped.
-5. **Given** a request that falls under the constitution's absolute prohibitions or consent gates, **When** the agent evaluates it, **Then** it refuses and states which rule applies.
+3. **Given** a running session, **When** a shell command's text names a location outside the project root, **Then** the command is refused before execution with a stated reason.
+4. **Given** a shell command whose escape is not visible in its text, **When** it runs under the OS-level restriction and is denied access outside the project root, **Then** the denial is returned to the agent as the observation and nothing outside the root is touched.
+5. **Given** a path that stays inside the project root only by way of symlinks or `..` segments, **When** it is resolved, **Then** resolution happens before the check so the boundary cannot be escaped.
+6. **Given** a request that falls under the constitution's absolute prohibitions or consent gates, **When** the agent evaluates it, **Then** it refuses and states which rule applies.
 
 ---
 
@@ -97,11 +108,12 @@ The developer is paying per token and wants each agent reply bounded, so a runaw
 ### Edge Cases
 
 - The user asks to read a file that does not exist → the failure is returned to the agent as an observation it can act on, not as a crash of the session.
-- The user asks to read a very large or binary file → the session handles it without corrupting the conversation or exhausting the context.
+- The user asks to read a very large file → the leading portion up to the configured ceiling is returned with an explicit truncation note naming the full size; a binary file is refused with a stated reason.
 - A shell command hangs or never returns → it is cut off by a time limit and the timeout is reported as the observation.
 - A shell command exits non-zero → both the exit status and the error output reach the agent so it can react.
-- A write targets a directory that does not yet exist inside the project root → the intended behaviour is stated rather than left to chance.
-- A write targets an existing file → the prior contents are replaced, and this is visible in what the agent reports.
+- A write targets a directory that does not yet exist inside the project root → the user is asked to confirm creating the parent folders, and any similarly named existing folder is surfaced first in case the path is a typo; without confirmation the write is refused.
+- A write targets an existing file → the prior contents are replaced by an atomic rename over the original, and the replacement is visible in what the agent reports.
+- The session is interrupted while a file is being written → the original file is left intact, because the new content is only staged in a temporary file until the final rename.
 - The agent requests a tool that does not exist, or supplies malformed arguments → the mismatch is returned as a recoverable observation, not a crash.
 - The user interrupts the session mid-run → it exits cleanly with a stated reason.
 - The agent asks for several tools in one turn → all are handled and their results returned before the next model turn.
@@ -113,7 +125,8 @@ The developer is paying per token and wants each agent reply bounded, so a runaw
 
 **Conversation loop**
 
-- **FR-001**: The system MUST hold a multi-turn conversation in the console, where the user types a message and the agent replies, repeating until the user ends the session.
+- **FR-001**: The system MUST hold a multi-turn conversation in the console, where the user types a message and the agent replies, repeating until the user ends the session by typing the exit word `suerte_socio` at the prompt or by sending an interrupt (Ctrl-C).
+- **FR-001a**: An interrupt received while a request is running MUST terminate the in-flight tool call and end the session with the stop reason "user exit".
 - **FR-002**: The system MUST carry the full prior turns of the session into each new agent turn, so replies depend on the whole history.
 - **FR-003**: On each agent turn, the system MUST let the agent decide whether a tool is needed, and if so, execute the requested tool before the agent's next turn.
 - **FR-004**: The system MUST return every tool result — success or failure — into the conversation as the observation for the agent's next turn.
@@ -123,7 +136,12 @@ The developer is paying per token and wants each agent reply bounded, so a runaw
 **Tools**
 
 - **FR-007**: The system MUST provide a `read_file` tool that loads a named file's contents into the conversation, accepting either an explicit path or a name resolved relative to the folder the agent was started in.
+- **FR-007a**: `read_file` MUST enforce a maximum read size, held as a configurable value rather than a fixed literal, set initially to roughly 1000 words. Content beyond the ceiling MUST be omitted and the observation MUST state explicitly that the result was truncated and give the file's full size.
+- **FR-007b**: `read_file` MUST refuse files detected as binary rather than text, returning the refusal and its reason as the observation.
 - **FR-008**: The system MUST provide a `write_file` tool that writes given content to a named location chosen by the agent.
+- **FR-008a**: When the target path's parent folders do not exist and resolve inside the project root, `write_file` MUST ask the user to confirm before creating them, and MUST create only the parent folders needed for the target path. Without confirmation the write is refused and the refusal is returned as the observation.
+- **FR-008b**: Before requesting that confirmation, the system MUST surface any existing folder whose name closely resembles the missing one, so a typo in an intended path is not silently turned into a new folder.
+- **FR-008c**: `write_file` MUST be atomic: content is written to a temporary file inside the target's own directory and the target is then replaced by a single atomic rename, so an interrupt or failure mid-write can never leave a partially written file in place of the original.
 - **FR-009**: The system MUST provide a `run_bash` tool that executes arbitrary shell commands and returns their standard output, standard error, and exit status.
 - **FR-010**: `run_bash` MUST apply a wall-clock time limit per command and report a timeout as an ordinary observation.
 - **FR-011**: Each tool MUST report failure as a described observation the agent can act on, never as an unhandled crash of the session.
@@ -131,6 +149,8 @@ The developer is paying per token and wants each agent reply bounded, so a runaw
 **Boundary and safety**
 
 - **FR-012**: The system MUST refuse any read, write, or command execution whose target resolves outside the project root — the folder the agent was started in.
+- **FR-012a**: For shell commands the boundary MUST be enforced in two stages: first, command text containing a path that resolves outside the project root is refused before execution with a stated reason; second, every command that does run executes with the project root as its working directory and under a restriction that makes paths outside the root unreachable, so the operating system — not the text inspection — is the authoritative boundary.
+- **FR-012b**: When the OS-level restriction blocks an access, the resulting error MUST be returned to the agent as an ordinary observation.
 - **FR-013**: The system MUST resolve paths fully — following `..` segments and symlinks — before applying the boundary check.
 - **FR-014**: The system MUST state a refusal in the conversation whenever an action is blocked, naming the reason.
 - **FR-015**: The system MUST refuse actions falling under the constitution's absolute prohibitions (VI) and MUST NOT perform consent-gated actions (VII) silently.
@@ -144,6 +164,11 @@ The developer is paying per token and wants each agent reply bounded, so a runaw
 - **FR-020**: The system MUST state when a response was cut short by the token cap.
 - **FR-021**: The system MUST stop a request after 10 loop iterations without an answer to the user, and say so.
 - **FR-022**: The system MUST never loop unbounded — every path through the loop reaches an answer, a cap, or a stated failure.
+
+**Session record**
+
+- **FR-023**: In addition to console output, the system MUST write a machine-readable session log inside the project root recording each turn, each tool call with its arguments and result, and the final stop reason of every request.
+- **FR-024**: The session log MUST be complete enough that stop reasons, retry counts, wait intervals, iteration counts, and per-response token totals can be checked from the file alone, without reading console scrollback.
 
 **Out of scope for this feature**
 
@@ -159,6 +184,7 @@ The developer is paying per token and wants each agent reply bounded, so a runaw
 - **Tool Result**: The observation returned from one tool invocation — its output, or a description of how it failed or why it was refused.
 - **Project Root**: The folder the agent was started in. The outer boundary of every filesystem and command action.
 - **Stop Reason**: The stated cause a request ended — answered, retries exhausted, iteration cap reached, token cap reached, refused, or user exit.
+- **Session Log**: The machine-readable record written inside the project root for each session, holding every turn, tool call, tool result, and stop reason. It is the evidence the success criteria are checked against.
 
 ## Success Criteria *(mandatory)*
 
@@ -166,12 +192,14 @@ The developer is paying per token and wants each agent reply bounded, so a runaw
 
 - **SC-001**: Told to create a console program computing log base b of a, the agent produces a working `log.py` with no user intervention beyond the initial request.
 - **SC-002**: Told to extend `log.py` with exponentiation, the agent reads, rewrites, and runs the file within a single request, and reports the observed result — chaining all three tools unattended.
-- **SC-003**: Across 10 runs of the two acceptance tasks above, at least 8 complete unattended.
-- **SC-004**: 100% of attempts to act outside the project root are refused, verified against a set of at least 5 escape attempts including relative paths and symlinks.
-- **SC-005**: With a tool deliberately broken, 100% of runs end within the retry cap with a stated reason — none spin or hang.
-- **SC-006**: Every terminated run reports a stop reason; runs that exhausted retries also report the attempt count and each wait interval.
-- **SC-007**: No request exceeds 10 loop iterations without an answer, and no single response exceeds 6000 tokens, across all test runs.
-- **SC-008**: An unattended acceptance task completes in under 2 minutes of wall-clock time.
+- **SC-003**: Consistency: each of the two acceptance tasks above is run 30 times from the identical prompt, folder, and starting state, and at least 80% of runs complete unattended — judged from the session logs, not by eye.
+- **SC-004**: Generalization: 30 runs with the prompt varied to request programs different in nature from the acceptance tasks, each still requiring all three tools, and at least 80% complete unattended.
+- **SC-005**: 100% of attempts to act outside the project root are refused, verified against a set of at least 5 escape attempts including relative paths and symlinks, and at least one attempt whose escape is not visible in the command text and is therefore caught by the OS-level restriction.
+- **SC-006**: With a tool deliberately broken, 100% of runs end within the retry cap with a stated reason — none spin or hang.
+- **SC-007**: Every terminated run reports a stop reason; runs that exhausted retries also report the attempt count and each wait interval.
+- **SC-008**: No request exceeds 10 loop iterations without an answer, and no single response exceeds 6000 tokens, across all test runs.
+- **SC-009**: At least 95% of unattended acceptance-task runs complete within the wall-clock budget, measured from the session log timestamps across the same 30-run set as SC-003. **The budget value is pending measurement**: the current placeholder is 2 minutes, inherited from the spec template's example rather than chosen from evidence. It MUST be replaced during planning with a value derived from observed baseline runs of SC-001 and SC-002, and the retry policy (FR-016–FR-018) and `run_bash` timeout (FR-010) MUST be fixed against the measured budget, not against the placeholder.
+- **SC-010**: 100% of runs produce a session log inside the project root from which the stop reason, tool calls, and cap counters can be read without console scrollback.
 
 ## Assumptions
 
@@ -180,6 +208,8 @@ The developer is paying per token and wants each agent reply bounded, so a runaw
 - The 6000-token cap applies to each individual agent response, not to a cumulative session total; no session-wide budget is in scope for this phase.
 - The retry cap and the backoff ratio are fixed configuration values chosen during planning; the requirement is that they are bounded, geometric, and reported — not that they take particular values.
 - The 10-iteration cap counts loop iterations within one user request, and resets when the agent returns an answer and the user speaks again.
+- The `read_file` ceiling is a configurable value, not a fixed rule: roughly 1000 words for this phase, with the intent that a later phase derives it from a percentage of the remaining context. Only the presence of a configurable ceiling and an explicit truncation notice is required here.
+- The two acceptance tasks need no folder creation, so the confirmation gate on creating parent folders does not conflict with the "unattended" success criteria; a task that does require a new folder is attended by definition.
 - Retries apply to failures that could plausibly succeed on a second attempt. A refusal on safety grounds is a final answer and is never retried.
 - Model access is via the official Anthropic API SDK with an API key supplied through a `.env` file, per the constitution's stack constraints.
 - The console is the only interface. No graphical or web front end is in scope.
