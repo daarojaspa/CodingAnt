@@ -1,5 +1,7 @@
 # Implementation Plan: Raw Agent + 3 Basic Tools (P1)
 
+**Project**: cyborgAnt (Python package `cyborg_ant`)
+
 **Branch**: `001-raw-agent-tool-loop` | **Date**: 2026-08-12 | **Spec**: [spec.md](./spec.md)
 
 **Input**: Feature specification from `specs/001-raw-agent-tool-loop/spec.md`
@@ -116,7 +118,7 @@ hakatonprectice/
 ├── pyproject.toml            # uv project; deps, ruff config, pytest markers
 ├── uv.lock                   # committed (constitution)
 ├── src/
-│   └── nocturne/
+│   └── cyborg_ant/
 │       ├── __init__.py
 │       ├── __main__.py       # Console entry point: reads input, prints replies, exits.
 │       ├── config.py         # All tunable values in one frozen dataclass.

@@ -11,10 +11,10 @@ from `hakatonprectice/` unless stated otherwise.
 
 | Requirement | Check | Status on this machine |
 |---|---|---|
-| Python 3.11+ | `python3 -V` | ✅ 3.12.2 |
-| `uv` | `uv --version` | ✅ `~/.local/bin/uv` |
-| `bubblewrap` | `bwrap --version` | ✅ `/usr/bin/bwrap` |
-| Anthropic API key | `grep -q ANTHROPIC_API_KEY ../.env` | ⚠️ verify — `.env` at the repo root currently holds an OpenAI key |
+| Python 3.11+ | `python3 -V` | ✅ 3.12.2 (measured during implementation) |
+| `uv` | `uv --version` | ✅ `uv 0.12.1` |
+| `bubblewrap` | `bwrap --version` | ✅ `bubblewrap 0.6.1` at `/usr/bin/bwrap` (measured during implementation) |
+| Anthropic API key | `grep -q ANTHROPIC_API_KEY ../.env` | ❌ missing — `.env` at the repo root holds only an OpenAI key. Add `ANTHROPIC_API_KEY=...` before running anything beyond the unit suite; SC-001/002/003/004/006/007/009 all need it. |
 
 `bwrap` is not optional. Without it the session starts but does **not** offer `run_bash`, and
 SC-002, SC-003, SC-004, and SC-005 are all unrunnable. On Debian/Ubuntu: `sudo apt install
@@ -55,7 +55,7 @@ searches upward from the package, so the existing file is reused rather than dup
 
 ```bash
 cd /path/to/whatever/folder/you/want/the/agent/to/act/on
-uv run --project /home/dan/coding_ant/hakatonprectice python -m nocturne
+uv run --project /home/dan/coding_ant/hakatonprectice python -m cyborg_ant
 ```
 
 **The current working directory becomes the project root** and the boundary of every action.
@@ -103,8 +103,8 @@ Should finish in seconds. Per Constitution IV, a test here **never** makes a rea
 ### SC-001 — agent creates a working program
 
 ```bash
-mkdir -p /tmp/nocturne-sc001 && cd /tmp/nocturne-sc001
-uv run --project /home/dan/coding_ant/hakatonprectice python -m nocturne
+mkdir -p /tmp/cyborgant-sc001 && cd /tmp/cyborgant-sc001
+uv run --project /home/dan/coding_ant/hakatonprectice python -m cyborg_ant
 ```
 
 Prompt:
@@ -145,7 +145,7 @@ print(names)  # expect read_file before write_file, then run_bash
 ### SC-006, SC-007 — bounded, visible failure
 
 ```bash
-ANTHROPIC_BASE_URL=http://127.0.0.1:9 uv run --project /home/dan/coding_ant/hakatonprectice python -m nocturne
+ANTHROPIC_BASE_URL=http://127.0.0.1:9 uv run --project /home/dan/coding_ant/hakatonprectice python -m cyborg_ant
 ```
 
 Port 9 refuses connections, so every model call fails with a retryable `APIConnectionError`.
@@ -172,16 +172,25 @@ truncated rather than presented as complete.
 
 ### SC-003, SC-004, SC-009 — the paid runs
 
-**These make 60 real API calls and cost real money.** They are deselected by default and must
-never run in CI-on-push.
+**These make real, paid API calls and are deselected by default; never run them in CI-on-push.**
+As implemented, `tests/acceptance/test_sc001_sc002.py` holds the two walkthroughs (SC-001, SC-002)
+as ordinary pytest tests marked `@pytest.mark.acceptance`, each using a fresh `tmp_path` (via the
+`acceptance_project_root` fixture in `tests/acceptance/conftest.py`) so runs never bleed into each
+other:
 
 ```bash
-uv run pytest -m acceptance --runs 30          # SC-003 consistency
-uv run pytest -m acceptance --generalize --runs 30   # SC-004 generalization
+uv run pytest -m acceptance tests/acceptance/test_sc001_sc002.py -v
 uv run python tests/acceptance/aggregate.py .agent_runs/
 ```
 
-Each run gets a fresh temp project root seeded from a pristine fixture — a log written into a
+For the 30-run SC-003/SC-004 consistency and generalization sets, invoke the above in a shell loop
+(e.g. `for i in $(seq 30); do uv run pytest -m acceptance ...; done`) against a shared
+`.agent_runs/` directory pointed at by `ANTHROPIC_LOG_DIR`-style scripting, or extend
+`tests/acceptance/` with a `--runs`/`--generalize` option if that repetition becomes routine — it
+was not built out as a first-class CLI flag in this pass, since it was never run (no
+`ANTHROPIC_API_KEY` was available in this environment; see Prerequisites above).
+
+Each run needs a fresh temp project root seeded from a pristine fixture — a log written into a
 shared folder would break SC-003's "identical starting state" and let run 2 see run 1's artifacts.
 
 Report shape:
@@ -221,7 +230,7 @@ scrollback closed. If any of them needs the terminal, FR-024 is not met.
 | Symptom | Cause | Fix |
 |---|---|---|
 | Startup says `run_bash` unavailable | `bwrap` missing or user namespaces disabled | Run the sandbox one-liner above; install `bubblewrap` |
-| `AuthenticationError` immediately | `.env` has no `ANTHROPIC_API_KEY` (it currently holds an OpenAI key) | Add the Anthropic key; it is gitignored |
+| `TypeError: Could not resolve authentication method` immediately | `.env` has no `ANTHROPIC_API_KEY` at all (it currently holds only an OpenAI key) — this is what the SDK raises when no key is configured; `AuthenticationError` is what you'd see instead with a *wrong* key | Add the Anthropic key; it is gitignored |
 | Answers truncated mid-sentence | `stop_reason: "max_tokens"` — thinking is sharing the 6000-token budget | Expected; FR-020 requires it be *reported*, not hidden. Lower `effort` to `low` if it is frequent |
 | Retries take longer than ~3 s total | The SDK's own retry loop is still on | `max_retries=0` on the client (research §R6) — two nested backoffs also make FR-018's report wrong |
 | Runs bleed into each other | Acceptance harness reusing a folder | Each run needs a fresh temp root seeded from the fixture |
